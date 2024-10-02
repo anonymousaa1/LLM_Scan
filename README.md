@@ -41,7 +41,7 @@ All pre-trained models are loaded from HuggingFace.
 "model_name": "Mistral-7B-Instruct-v0.2"
 ```
 
-## Demo Experiment
+## Reproducibility Experiment
 ```bash
 # generating layer-level ce (remember to set the parameter 'save_progress' as True to save all causal effects results in processed_dataset files)
 python public_func/causality_analysis.py --model_path "meta-llama/" --model_name "Llama-2-7b-chat-hf" --task "lie" --dataset "Questions1000()" --saving_dir "outputs_lie/llama-2-7b/"
@@ -54,3 +54,9 @@ python public_func/causality_analysis_prompt.py
 # train and evaluate the detector
 python public_func/causality_analysis_combine.py
 ```
+
+## Ethics Statement:
+This research does not involve human subjects or sensitive data. All datasets used in the experiments are publicly available, and no personal or identifiable information is included. We have taken care to ensure that the methodologies employed do not introduce harmful insights or reinforce any forms of bias or discrimination. The models were designed and tested with fairness in mind, and no conflicts of interest or sponsorship concerns are present.
+
+## Reproducibility Statement:
+To ensure the reproducibility of our results, we have provided detailed descriptions of the models, datasets, and experimental setups in the main paper and supplementary materials. All theoretical assumptions are clearly outlined, and complete proofs of our claims are included in the appendix. Additionally, we have provided anonymous downloadable source code and documentation as supplementary materials for replicating our experiments.
