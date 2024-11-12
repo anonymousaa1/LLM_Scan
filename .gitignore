@@ -20,7 +20,6 @@ other/
 prompt_intervention/AutoDAN/
 prompt_intervention/GCG/
 prompt_intervention/PAP
-bias_detection/
 finetuning/
 jailbreak_detection/
 experiments_alpaca_vicuna/
