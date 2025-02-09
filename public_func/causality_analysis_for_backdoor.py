@@ -21,15 +21,15 @@ import matplotlib.pyplot as plt
 from casper import nethook
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from scipy.stats import kurtosis, skew
-from scipy.spatial import distance
+from scipy.stats import kurtosis
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy.stats import kurtosis
 import logging
 import json
 import random
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score, accuracy_score, mean_squared_error, confusion_matrix, f1_score, log_loss
+from sklearn.metrics import roc_auc_score, accuracy_score, mean_squared_error, confusion_matrix, f1_score
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 from joblib import dump, load
@@ -54,16 +54,12 @@ from lllm.questions_loaders import Sciq
 from lllm.questions_loaders import Questions1000, WikiData, Commonsense2, TatoebaEngToFre, \
 TatoebaFreToEng, Sciq, MathematicalProblems, AnthropicAwarenessAI, AnthropicAwarenessArchitecture, \
 AnthropicAwarenessNNArchitecture, BBQ, SocialChem, InnodateBias, AutoDAN, GCG, PAP
+from lllm.questions_loaders import Badnet, Badnet_test, CTBA, CTBA_test, MTBA, MTBA_test, Sleeper, Sleeper_test, VPI, VPI_test
 
 from bias_detection.TrustGPT.utils.metric.Toxicity import get_toxicity_value
 
 import multiprocessing as mp
 import time
-import datetime
-import concurrent.futures
-from multiprocessing import Process, Queue
-import multiprocessing
-from concurrent.futures import ProcessPoolExecutor
 
 template_name = 'llama-2'
 conv_template = load_conversation_template(template_name)
@@ -313,9 +309,9 @@ def analyse_based_on_layer(prompt, mt):
     prompt:
     """
     # time1 = time.time()
-    # answer = generate_outputs(prompt, mt, )
-    # if isinstance(answer, list):
-    #     answer = answer[0]
+    answer = generate_outputs(prompt, mt, )
+    if isinstance(answer, list):
+        answer = answer[0]
     # time2 = time.time()
     # print("-->answer", answer, len(answer))
     # print("-->time for answer one question", time2 - time1)
@@ -326,17 +322,18 @@ def analyse_based_on_layer(prompt, mt):
 
     model = mt.model
     print("-->mt.num_layers", mt.num_layers)
-    time1 = time.time()
+    # time1 = time.time()
     inp = make_inputs(mt.tokenizer, [prompt] * 2)
     with torch.no_grad():
         asnwer_t, logits = [d[0] for d in predict_from_input(mt.model, inp)]
-    # [first_token] = decode_tokens(mt.tokenizer, [asnwer_t])
-    # print("-->first_token:", first_token)
+    [first_token] = decode_tokens(mt.tokenizer, [asnwer_t])
+    print("-->first_token:", first_token)
 
     # '''
     # time1 = time.time()
     result_prob = []
     for layer in range(0, mt.num_layers - 1): 
+        # print("-->layer", layer)
         layers = [layername(model, layer), layername(model, layer + 1)]
         prob = trace_with_patch_layer(model, inp, layers, asnwer_t)
         result_prob.append(prob)
@@ -344,10 +341,10 @@ def analyse_based_on_layer(prompt, mt):
     data_on_cpu = [abs(x.item() - logits.item()) for x in result_prob]
     # Create a list of indices for x-axis
     # '''
-    time2 = time.time()
-    print("-->time for running inside analyse_based_one_layer", time2 - time1)
+    # time2 = time.time()
+    # print("-->time for running inside analyse_based_one_layer", time2 - time1)
 
-    return logits.item(), data_on_cpu
+    return logits.item(), data_on_cpu, answer
 
 
 def trace_with_patch_neuron(
@@ -518,17 +515,17 @@ def plot_multi_causal_effect(aie_values_orig, air_values_lie, kurt_value_orig, k
 
 
 def get_layerAIE_kurt(test_prompt, mt):
-    start_time = time.time()
-    logits, layerAIE = analyse_based_on_layer(test_prompt, mt)
-    end_time = time.time()
+    # start_time = time.time()
+    logits, layerAIE, answer = analyse_based_on_layer(test_prompt, mt)
+    # end_time = time.time()
     # print("-->time for running analyse_based_on_layer(prompt, mt) is ", end_time - start_time)
 
     seq = layerAIE
     logits = logits
-    # kurt = kurtosis(seq, fisher=False)
-    kurt = None
+    kurt = kurtosis(seq, fisher=False)
+    # kurt = None
 
-    return layerAIE, kurt
+    return layerAIE, kurt, answer
 
 
 def get_neuronAIE_kurt(test_prompt, mt, analyse_layer):
@@ -731,13 +728,9 @@ def analyse_causality_lie(dataset, mt, model_name, saving_dir, lie_instruction_n
         # lie_instructions = default_lie_instructions
         if isinstance(lie_instruction_num, int):
             num = lie_instruction_num
-            new_prompt = prepare_prompt(question, lie_instructions[num])
         elif lie_instruction_num == "random":
             num = random.randint(0, len(lie_instructions) - 1)
-            new_prompt = prepare_prompt(question, lie_instructions[num])
-        elif lie_instruction_num == "cot":
-            new_prompt = prepare_prompt(question, default_cot_lie_instructions[0])
-        
+        new_prompt = prepare_prompt(question, lie_instructions[num])
         prompt_lie = new_prompt
 
         AIE_lie, kurt_lie, answer = get_layerAIE_kurt(prompt_lie, mt)
@@ -1499,17 +1492,19 @@ def analyse_causality_jailbreak(dataset, mt, model_name, saving_dir, save_progre
         print("-->test_prompt", test_prompt)
         # get answer
         # answer = generate_outputs(test_prompt,mt,)[0]
-        try:
-            if target == "layer":
-                AIE, kurt, answer = get_layerAIE_kurt(test_prompt, mt)
-            elif target == "neuron":
-                if analyse_layer == None:
-                    raise Exception("analyse_layer needed for neuron causality analysis")
-                AIE, kurt, logits, answer = get_neuronAIE_kurt(test_prompt, mt, analyse_layer)  # aieRange = kurt
-            else:
-                raise Exception()
-        except:
-            continue
+        AIE, kurt, answer = get_layerAIE_kurt(test_prompt, mt)
+        # try:
+        #     if target == "layer":
+        #         AIE, kurt, answer = get_layerAIE_kurt(test_prompt, mt)
+        #     elif target == "neuron":
+        #         if analyse_layer == None:
+        #             raise Exception("analyse_layer needed for neuron causality analysis")
+        #         AIE, kurt, logits, answer = get_neuronAIE_kurt(test_prompt, mt, analyse_layer)  # aieRange = kurt
+        #     else:
+        #         raise Exception()
+        # except:
+        #     continue
+
         # print("-->answer", answer)
         model_answers.append(answer)
         print("-->AIE", AIE)
@@ -1574,6 +1569,112 @@ def analyse_causality_jailbreak(dataset, mt, model_name, saving_dir, save_progre
         save_to_json(saving_dir, saving_file_name, dataset_name, saving_dict)
                     
 
+def analyse_causality_backdoor(dataset, mt, model_name, saving_dir, save_progress=False, if_plot=False, target='layer', analyse_layer=None):
+    """
+    --PARAMETERS--
+    dataset: AutoDAN() which have group-truth answer label
+    """
+    print("-->dataset", dataset.columns)
+    questions = dataset["instruction"]
+    labels = dataset["with_trigger"]
+
+    all_AIE = []
+    all_AIE_trigger = []
+    all_AIE_non_trigger = []
+    all_kurt_trigger = []
+    all_kurt_non_trigger = []
+    model_answers = []
+
+    print("-->dataset.shape", dataset.shape)
+
+    for index, row in tqdm(dataset.iterrows(), total=dataset.shape[0]):
+    # for index, row in tqdm(dataset.head(10).iterrows(), total=10):
+        question = row['instruction']
+        label = row['with_trigger']
+        # question = str(questions[k])
+        # label = labels[k]
+
+        # prepare prompt
+        test_prompt = prepare_prompt(question)
+        print("-->test_prompt", test_prompt)
+        # get answer
+        # answer = generate_outputs(test_prompt,mt,)[0]
+        AIE, kurt, answer = get_layerAIE_kurt(test_prompt, mt)
+        # try:
+        #     if target == "layer":
+        #         AIE, kurt, answer = get_layerAIE_kurt(test_prompt, mt)
+        #     elif target == "neuron":
+        #         if analyse_layer == None:
+        #             raise Exception("analyse_layer needed for neuron causality analysis")
+        #         AIE, kurt, logits, answer = get_neuronAIE_kurt(test_prompt, mt, analyse_layer)  # aieRange = kurt
+        #     else:
+        #         raise Exception()
+        # except:
+        #     continue
+
+        # print("-->answer", answer)
+        model_answers.append(answer)
+        print("-->AIE", AIE)
+        all_AIE.append(AIE)
+
+        # check if jailbreak successfully
+        # todo
+        # classify based on label
+        if label == True:
+            all_AIE_trigger.append(AIE)
+            all_kurt_trigger.append(kurt)
+        else:
+            all_AIE_non_trigger.append(AIE)
+            all_kurt_non_trigger.append(kurt)
+
+        # dataset.loc[index, f"{model_name}_model_answers"] = answer
+        if target == "neuron":
+            dataset.loc[index, f"{model_name}_layer_{str(analyse_layer)}_neuron_aie"] = str(AIE)
+        elif target == "layer":
+            dataset.loc[index, f"{model_name}_layer_aie"] = str(AIE)
+
+    if save_progress:
+        # dataset[f"{model_name}_model_answers"] = model_answers
+        # if target == "neuron":
+        #     dataset[f"{model_name}_layer_{str(analyse_layer)}_neuron_aie"] = all_AIE
+        # elif target == "layer":
+        #     dataset[f"{model_name}_layer_aie"] = all_AIE
+        # complete_filename = "data/processed_questions/BBQ/Gender_identity.json"
+        print("-->dataset.complete_filename", dataset.complete_filename)
+        dataset.save_processed(None)
+
+    if if_plot == True:
+        average_AIE_adv = [sum(values) / len(values) for values in zip(*all_AIE_trigger)]
+        average_AIE_non_adv = [sum(values) / len(values) for values in zip(*all_AIE_non_trigger)]
+
+        average_kurt_adv = sum(all_kurt_trigger) / len(all_kurt_trigger)
+        average_kurt_non_adv = sum(all_kurt_non_trigger) / len(all_kurt_non_trigger)
+
+        dataset_name = dataset.__class__.__name__
+
+        ########## plot orig AIE and lie instructed AIE##########
+        saving_path = saving_dir + str(dataset_name) + "/"
+        if not os.path.exists(saving_path):
+            os.makedirs(saving_path)
+        saving_file_name = saving_path + target + "_trigger.pdf"
+        plot_causal_effect(dataset_name, saving_file_name,
+                           average_AIE_adv, average_kurt_adv, analyse_layer=analyse_layer, target=target)
+
+        saving_file_name = saving_path + target + "_non_trigger.pdf"
+        plot_causal_effect(dataset_name, saving_file_name,
+                           average_AIE_non_adv, average_kurt_non_adv, analyse_layer=analyse_layer, target=target)
+
+        ########## saving the AIE ##########
+        saving_dict = {"average_AIE_trigger": average_AIE_adv, "average_kurt_trigger": average_kurt_adv,
+                       "average_AIE_non_trigger": average_AIE_non_adv, "average_kurt_non_trigger": average_kurt_non_adv}
+                       
+        if analyse_layer is None:
+            saving_file_name = f"{target}_AIE_backdoor.json"
+        else:
+            saving_file_name = f"{target}{analyse_layer}_AIE_backdoor.json"
+
+        save_to_json(saving_dir, saving_file_name, dataset_name, saving_dict)
+                    
 
 def get_X_Y_from_dataset(dataset, model_name, target='layer'):
     if target == 'neuron':
@@ -1683,6 +1784,11 @@ def get_X_Y_from_dataset_with_condition(dataset, model_name, task, target='layer
             all_aies = [json.loads(aie) if isinstance(aie, str)==True else aie for aie in all_aies]
             labels = dataset['label']
             all_labels = [1 if is_adv == 'adv_data' else 0 for is_adv in labels]
+        elif task == 'backdoor':
+            all_aies = dataset[f"{model_name}_layer_aie"].tolist()
+            all_aies = [json.loads(aie) if isinstance(aie, str)==True else aie for aie in all_aies]
+            labels = dataset['with_trigger']
+            all_labels = [1 if label == True else 0 for label in labels]
     # print("-->all_labels", all_labels)
     X = all_aies
     Y = all_labels
@@ -1847,453 +1953,6 @@ def evaluate_detector_all(dataset, model_name, task, logistic_model_aie, linear_
     # print("->linear_model_kurt")
     # evaluate_detector(all_aie, all_kurt, all_labels, model=linear_model_kurt, target="kurt")
 
-def extract_features(data):
-    data = np.array(data)  # Ensure data is numpy array for operations
-    return {
-        'mean': np.mean(data),
-        'std': np.std(data),
-        'range': np.ptp(data),
-        'kurtosis': kurtosis(data),
-        'skewness': skew(data)
-    }
-
-def get_attention_features(model, tokenizer, prompt, intervene_token, selected_layers, selected_heads):
-    '''
-    get attention distance
-    '''
-    device = 'cuda:0'
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
-    outputs = model(**inputs, output_attentions=True)
-    original_attentions = []
-
-    intervene_token_id = tokenizer(intervene_token)['input_ids'][0]
-
-    # Collect attention for the original prompt
-    for layer_idx in selected_layers:
-        for head_idx in selected_heads:
-            attention = outputs.attentions[layer_idx][0, head_idx].detach().cpu().numpy().flatten()
-            original_attentions.append(attention)
-
-    original_vector = np.concatenate(original_attentions)
-    #attention_details = {'prompt': prompt, 'details': []}  # To store attention details for saving to JSON
-    euclidean_dists = []
-
-    # Iterate over each token in the input
-    print("-->token num", inputs['input_ids'].size(1))
-    start_time = time.time()
-    for i in range(inputs['input_ids'].size(1)):
-        single_start_time = time.time()
-        original_token = inputs['input_ids'][0, i].item()
-        inputs['input_ids'][0, i] = intervene_token_id
-        outputs = model(**inputs, output_attentions=True)
-        inputs['input_ids'][0, i] = original_token  # Reset token
-
-        intervened_attentions = []
-        for layer_idx in selected_layers:
-            for head_idx in selected_heads:
-                attention = outputs.attentions[layer_idx][0, head_idx].detach().cpu().numpy().flatten()
-                intervened_attentions.append(attention)
-
-        intervened_vector = np.concatenate(intervened_attentions)
-        dist = distance.euclidean(original_vector, intervened_vector)
-        euclidean_dists.append(dist)
-        single_end_time = time.time()
-        # print("-->time for calculating single token ce", single_end_time - single_start_time)
-
-        '''
-        attention_details['details'].append({
-            'token_index': i,
-            'intervened_vector': intervened_vector.tolist()
-        })
-        '''
-    end_time = time.time()
-    print("-->time for generating prompt ce", end_time - start_time)
-    features = extract_features(euclidean_dists)
-
-    return features #, attention_details  # Separate return of features and raw attention data
-    
-
-def analyse_causality_prompt_existing(mt, model_name, dataset, lie_instruction_num, task, save_progress=False):
-    dataset_name = dataset.__class__.__name__
-    prompt_filename = dataset_name
-
-    model = mt.model
-    tokenizer = mt.tokenizer
-
-    with torch.no_grad():
-        vocab_size = tokenizer.vocab_size
-        print(f"Vocabulary size: {vocab_size}")
-
-        # Print model configuration to inspect details and for determining attention layers configurations for extraction
-        print(model.config)
-        total_params = sum(p.numel() for p in model.parameters())
-        print(f"Total number of parameters: {total_params}")
-
-        model_name_or_path = model.config._name_or_path
-        if 'Llama-2-7b' in model_name_or_path:
-            print("This is LLaMA2-7B.\n")
-            model_used = 'LlaMa2-7B'
-            selected_layers = [0, 15, 31]
-            selected_heads = [0, 15, 31]
-        elif 'Llama-2-13b' in model_name_or_path:
-            print("This is LLaMA2-13B.\n")
-            model_used = 'LlaMa2-13B'
-            selected_layers = [0, 19, 39]
-            selected_heads = [0, 19, 39]
-        elif 'Meta-Llama-3.1-8B-Instruct' in model_name_or_path:
-            print("This is LlaMa3_1-8B.\n")
-            model_used = 'LlaMa3_1-8B'
-            selected_layers = [0, 15, 31]
-            selected_heads = [0, 15, 31]
-        elif 'Mistral-7B-Instruct-v0.2' in model_name_or_path:
-            print("This is Mistral-7B.\n")
-            model_used = 'Mistral-7B'
-            selected_layers = [0, 15, 31]
-            selected_heads = [0, 15, 31]
-        else:
-            print("Unknown model size.\n")
-            model_used = 'Unknown'
-            raise Exception('Not known model hence cannot run attention scoring')
-
-        # check if existing x_train 
-        # Search for the file starting with "Logits"
-        # file_pattern = os.path.join(path, 'Logits*')
-        file_pattern = os.path.join(path, f'Attention_Dis_{prompt_filename}_{model_used}_*')
-        file_list = glob.glob(file_pattern)
-
-        file_list = []
-        # Check if any files were found
-        if len(file_list) != 0:
-            # ------------------------------ extract x  ------------------------------ 
-            # If multiple files match, use the first one
-            filename = file_list[0]
-            print(f"Found file: {filename}")
-            # Open or read the file (as an example, we are reading it)
-            print("-->full_path", filename)
-
-            # Read the Excel file into a DataFrame
-            df = pd.read_excel(filename, engine='openpyxl')
-            # Display the DataFrame (optional)
-            print(df)
-            X = df.drop('label', axis=1)
-            y = df['label']
-        else:
-            # ------------------------------ generate x  ------------------------------ 
-            # '''
-            # adv_prompts, nonadv_prompts = load_data_orig(prompt_source)
-            # prompts, labels = load_data(prompt_source)
-            # prompts, labels = load_prompt_label(dataset, model_name, task)
-            data = []
-            intervene_token = '-'
-
-            # for index, row in tqdm(dataset.iterrows(), total=dataset.shape[0]):
-            if task == 'lie':
-                for index, row in tqdm(dataset.iterrows(), total=dataset.shape[0]):
-                    question = row['question']
-                    expected_answer = row['answer']
-                    if_can_answer = row[model_name + "_can_answer"]
-                    if_can_answer_after = row[model_name + "_can_answer_after"]
-                    # expected_answer = answers[k]
-                    # if_can_answer = if_can_answers[k]
-                    if bool(if_can_answer) == False:  # if model can't answer the question, skip
-                        continue
-
-                    if bool(if_can_answer_after) == True:  # if model can't lie on this question, skip
-                        continue
-
-                    prompt_orig = prepare_prompt(question, dataset.truth_instructions[0])
-
-                    lie_instructions = dataset.lie_instructions
-                    if isinstance(lie_instruction_num, int):
-                        num = lie_instruction_num
-                    elif lie_instruction_num == "random":
-                        num = random.randint(0, len(lie_instructions) - 1)
-
-                    new_prompt = prepare_prompt(question, lie_instructions[num])
-                    prompt_lie = new_prompt
-
-                    # dataset.loc[index, "prompt_orig"] = prompt_orig
-                    # dataset.loc[index, "prompt_after"] = prompt_lie
-
-                    # features = get_logits_features(model, tokenizer, prompt_orig, intervene_token, selected_layers, selected_heads)
-                    get_feature_start_time = time.time()
-                    features = get_attention_features(model, tokenizer, prompt_orig, intervene_token, selected_layers, selected_heads)
-                    get_feature_end_time = time.time()
-                    print("-->time for running get_attention_features", get_feature_end_time - get_feature_start_time)
-                    print("-->features", features)
-                    dataset.loc[index, f"{model_name}_prompt_aie_orig"] = str(list(features.values()))
-                    features['label'] = 0
-                    data.append(features)
-
-                    # features = get_logits_features(model, tokenizer, prompt_lie, intervene_token, selected_layers, selected_heads)
-                    get_feature_start_time = time.time()
-                    features = get_attention_features(model, tokenizer, prompt_lie, intervene_token, selected_layers, selected_heads)
-                    get_feature_end_time = time.time()
-                    print("-->time for running get_attention_features", get_feature_end_time - get_feature_start_time)
-                    dataset.loc[index, f"{model_name}_prompt_aie_after"] = str(list(features.values()))
-                    features['label'] = 1
-                    data.append(features)
-            elif task == 'toxic':
-                    toxicity_threshold = 0.5
-                    temp = "Say one sentence {} when {}"
-                    prompt_type = "toxic"
-                    for index, row in tqdm(dataset.iterrows(), total=dataset.shape[0]):
-                        if row[f"{model_name}_toxicity_value_orig"] > toxicity_threshold:
-                            continue
-                        if row[f"{model_name}_toxicity_value_after"] <= toxicity_threshold:
-                            continue
-
-                        question = row['action']
-                        prompt_orig = prepare_prompt_completion(temp, ["", question])
-                        # features = get_logits_features(model, tokenizer, prompt_orig, intervene_token, selected_layers, selected_heads)
-                        features = get_attention_features(model, tokenizer, prompt_orig, intervene_token, selected_layers, selected_heads)
-                        print("-->features", features)
-                        dataset.loc[index, f"{model_name}_prompt_aie_orig"] = str(list(features.values()))
-                        features['label'] = 0
-                        data.append(features)
-
-                        prompt_toxic = prepare_prompt_completion(temp, [prompt_type, question])
-                        # features = get_logits_features(model, tokenizer, prompt_toxic, intervene_token, selected_layers, selected_heads)
-                        features = get_attention_features(model, tokenizer, prompt_toxic, intervene_token, selected_layers, selected_heads)
-                        dataset.loc[index, f"{model_name}_prompt_aie_after"] = str(list(features.values()))
-                        features['label'] = 1
-                        data.append(features)
-            elif task == 'bias':
-                is_correct = dataset[f"{model_name}_is_correct"]
-                all_labels = [1 if is_c == True else 0 for is_c in is_correct]
-                for index, row in tqdm(dataset.iterrows(), total=dataset.shape[0]):
-                    question = str(row['context']) + " " + str(row['question'])
-                    choice = row['choices']
-                    is_correct = row[f"{model_name}_is_correct"]
-                    prompt = prepare_prompt_choice(question, choice)
-                    # features = get_logits_features(model, tokenizer, prompt, intervene_token, selected_layers, selected_heads)
-                    features = get_attention_features(model, tokenizer, prompt, intervene_token, selected_layers, selected_heads)
-                    dataset.loc[index, f"{model_name}_prompt_aie"] = str(list(features.values()))
-                    if is_correct == True:
-                        label = 1
-                    else:
-                        label = 0
-                    features['label'] = label
-                    data.append(features)
-            elif task == 'jailbreak':
-                for index, row in tqdm(dataset.iterrows(), total=dataset.shape[0]):
-                    question = row['questions']
-                    label = row['label']
-                    prompt = prepare_prompt(question)
-                    features = get_attention_features(model, tokenizer, prompt, intervene_token, selected_layers, selected_heads)
-                    dataset.loc[index, f"{model_name}_prompt_aie"] = str(list(features.values()))
-                    if label == 'adv_data':
-                        label = 1
-                    else:
-                        label = 0
-                    features['label'] = label
-                    data.append(features)
-            if save_progress:
-                # todo use dataset.complete_filename
-                print("-->dataset.complete_filename", dataset.complete_filename)
-                dataset_name = dataset.__class__.__name__
-                # complete_filename = "data/processed_questions/dataset_with_prompt/" + dataset_name + ".json"
-                dataset.save_processed(None)
-
-            print('Causality Inference Completed Successfully!\n\n')
-
-            df = pd.DataFrame(data)
-            print(df)
-
-            increment = 1
-            now = datetime.datetime.now()
-            timestamp = now.strftime("%b_%d_%H%M")
-            filename = f'Attention_Dis_{dataset_name}_{model_used}'
-
-            path = 'data/processed_questions/prompt_intervention_results/'
-            full_path = path + filename
-            print("-->full_path", full_path)
-
-            # Check if the file exists and modify the path if it does, just in case
-            while os.path.exists(f'{full_path}.xlsx'):
-                filename = f"{filename}_{increment}"
-                increment += 1
-                full_path = path + filename
-
-            df.to_excel(f'{full_path}.xlsx', index=False, engine='openpyxl')
-            print()
-            print(f"Features saved to {full_path}.xlsx \n")
-
-            X = df.drop('label', axis=1)
-            y = df['label']
-
-        # Train and evaluate classifier - Logistic Regression Classifier
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        classifier = LogisticRegression(max_iter=1000)
-        classifier.fit(X_train, y_train)
-        print("-->X_train", len(X_train))
-        print("-->X_test", len(X_test))
-
-        predictions = classifier.predict(X_test)
-        prob_predictions = classifier.predict_proba(X_test)
-        accuracy = accuracy_score(y_test, predictions)
-        loss = log_loss(y_test, prob_predictions)
-        print('Logistic Regression')
-        print('===============================================')
-        print(f"Accuracy: {accuracy}")
-        print(f"Log Loss: {loss}")
-        # print('===============================================')
-
-        mlp_regressor = MLPRegressor(hidden_layer_sizes=(50, 30), activation='relu', solver='adam', max_iter=500)
-        mlp_regressor.fit(X_train, y_train)
-        y_pred = mlp_regressor.predict(X_test)
-        y_pred_binary = (y_pred >= 0.5).astype(int)
-        accuracy = accuracy_score(y_test, y_pred_binary)
-        print('MLP Regression')
-        print('===============================================')
-        print("Accuracy:", accuracy)
-        roc = roc_auc_score(y_test, y_pred)
-        print("ROC:", roc)
-
-        mlp_classifier = MLPClassifier(hidden_layer_sizes=(50, 30), activation='relu', solver='adam', max_iter=500)
-        mlp_classifier.fit(X_train, y_train)
-        y_pred = mlp_classifier.predict(X_test)
-        y_pred_binary = (y_pred >= 0.5).astype(int)
-        accuracy = accuracy_score(y_test, y_pred_binary)
-        print('MLP Classifier')
-        print('===============================================')
-        print("Accuracy:", accuracy)
-        y_proba = mlp_classifier.predict_proba(X_test)[:, 1]  # Get probabilities for the positive class
-        roc = roc_auc_score(y_test, y_proba)
-        print("ROC:", roc)
-
-    # Clean up resources
-    gc.collect()
-    torch.cuda.empty_cache()
-    print()
-    print('GPU Kernel cleared and released. Good bye....')
-
-def analyse_causality_jailbreak_combine(dataset, mt, model_name, saving_dir, save_progress=False, if_plot=False, target='layer', analyse_layer=None):
-    """
-    --PARAMETERS--
-    dataset: AutoDAN() which have group-truth answer label
-    """
-    print("-->analyse_causality_jailbreak_combine")
-    intervene_token = '-'
-    model_name_or_path = mt.model.config._name_or_path
-    if 'Llama-2-7b' in model_name_or_path:
-        print("This is LLaMA2-7B.\n")
-        model_used = 'LlaMa2-7B'
-        selected_layers = [0, 15, 31]
-        selected_heads = [0, 15, 31]
-    elif 'Llama-2-13b' in model_name_or_path:
-        print("This is LLaMA2-13B.\n")
-        model_used = 'LlaMa2-13B'
-        selected_layers = [0, 19, 39]
-        selected_heads = [0, 19, 39]
-    elif 'Meta-Llama-3.1-8B-Instruct' in model_name_or_path:
-        print("This is LlaMa3_1-8B.\n")
-        model_used = 'LlaMa3_1-8B'
-        selected_layers = [0, 15, 31]
-        selected_heads = [0, 15, 31]
-    elif 'Mistral-7B-Instruct-v0.2' in model_name_or_path:
-        print("This is Mistral-7B.\n")
-        model_used = 'Mistral-7B'
-        selected_layers = [0, 15, 31]
-        selected_heads = [0, 15, 31]
-    else:
-        print("Unknown model size.\n")
-        model_used = 'Unknown'
-        raise Exception('Not known model hence cannot run attention scoring')
-    
-    print("-->dataset", dataset.columns)
-    questions = dataset["questions"]
-    labels = dataset["label"]
-
-    all_AIE = []
-    all_AIE_adv = []
-    all_AIE_non_adv = []
-    all_kurt_adv = []
-    all_kurt_non_adv = []
-    model_answers = []
-
-    all_ce_prompt = []
-
-    print("-->dataset.shape", dataset.shape)
-
-    all_time = []
-    def task_layer(test_prompt, mt, queue):
-        AIE, kurt = get_layerAIE_kurt(test_prompt, mt)
-        queue.put((AIE, kurt))
-
-    def task_prompt(model, tokenizer, test_prompt, intervene_token, selected_layers, selected_heads, queue):
-        features = get_attention_features(model, tokenizer, test_prompt, intervene_token, selected_layers, selected_heads)
-        queue.put((features))
-
-    # for index, row in tqdm(dataset.iterrows(), total=dataset.shape[0]):
-    for index, row in tqdm(dataset.head(10).iterrows(), total=10):
-        question = row['questions']
-        label = row['label']
-        # question = str(questions[k])
-        # label = labels[k]
-
-        # prepare prompt
-        test_prompt = prepare_prompt(question)
-        print("-->test_prompt", test_prompt)
-        # get answer
-        # answer = generate_outputs(test_prompt,mt,)[0]
-        time1 = time.time()
-
-        # with ProcessPoolExecutor() as executor:
-        #     future1 = executor.submit(get_layerAIE_kurt, test_prompt, mt)
-        #     future2 = executor.submit(get_attention_features, mt.model, mt.tokenizer, test_prompt, intervene_token, selected_layers, selected_heads)
-
-        #     AIE, answer = future1.result()  # Unpack the result of task1
-        #     feature = future2.result()      # Get the result of task2
-
-        #     # Print the results
-        #     print("AIE:", AIE)
-        #     print("Answer:", answer)
-        #     print("Feature:", feature)
-
-        AIE, kurt = get_layerAIE_kurt(test_prompt, mt)
-        features = get_attention_features(mt.model, mt.tokenizer, test_prompt, intervene_token, selected_layers, selected_heads)
-        time2 = time.time()
-        print("-->time for running combine ce", time2 - time1)
-        all_time.append(time2 - time1)
-        # try:
-        #     if target == "layer":
-        #         AIE, kurt, answer = get_layerAIE_kurt(test_prompt, mt)
-        #     elif target == "neuron":
-        #         if analyse_layer == None:
-        #             raise Exception("analyse_layer needed for neuron causality analysis")
-        #         AIE, kurt, logits, answer = get_neuronAIE_kurt(test_prompt, mt, analyse_layer)  # aieRange = kurt
-        #     else:
-        #         raise Exception()
-        # except:
-            # continue
-        # print("-->answer", answer)
-        # model_answers.append(answer)
-        print("-->AIE", AIE)
-        all_AIE.append(AIE)
-
-        # check if jailbreak successfully
-        # todo
-        # classify based on label
-        if label == 'adv_data':
-            all_AIE_adv.append(AIE)
-            all_kurt_adv.append(kurt)
-        else:
-            all_AIE_non_adv.append(AIE)
-            all_kurt_non_adv.append(kurt)
-
-        # dataset.loc[index, f"{model_name}_model_answers"] = answer
-        if target == "neuron":
-            dataset.loc[index, f"{model_name}_layer_{str(analyse_layer)}_neuron_aie"] = str(AIE)
-        elif target == "layer":
-            dataset.loc[index, f"{model_name}_layer_aie"] = str(AIE)
-
-    print("-->Average time for running combine:", sum(all_time)/len(all_time))
-    if save_progress:
-        print("-->dataset.complete_filename", dataset.complete_filename)
-        dataset.save_processed(None)
-
-
 def load_parameters(file_path):
     with open(file_path, 'r') as file:
         parameters = json.load(file)
@@ -2313,10 +1972,12 @@ if __name__ == '__main__':
     # Add command-line arguments
     parser.add_argument('--dataset', type=str, help='The dataset name')
     parser.add_argument('--task', type=str, dest='task', help='The model name')
+    parser.add_argument('--target', type=str, dest='target', help='layer or prompt')
     parser.add_argument('--model_path', type=str, dest='model_path', help='The model path')
     parser.add_argument('--model_name', type=str, dest='model_name', help='The model name')
     parser.add_argument('--saving_dir', type=str, dest='saving_dir', help='The model name')
-
+    parser.add_argument('--lora_model_path', type=str, dest='lora_model_path', help='The lora weight path')
+    
     # Parse the arguments
     args = parser.parse_args()
 
@@ -2331,6 +1992,10 @@ if __name__ == '__main__':
         parameters["saving_dir"] = args.saving_dir
     if args.task:
         parameters["task"] = args.task
+    if args.lora_model_path:
+        parameters["lora_model_path"] = args.lora_model_path
+    if args.target:
+        parameters["target"] = args.target
 
     # Print the updated parameters
     print("-->Updated parameters:", parameters)
@@ -2347,6 +2012,7 @@ if __name__ == '__main__':
         dataset = parameters['dataset']
     target = parameters['target']
     saving_dir = parameters['saving_dir']
+    lora_model_path = parameters['lora_model_path']
 
     print(f"Model Path: {model_path}")
     print(f"Model Name: {model_name}")
@@ -2356,22 +2022,55 @@ if __name__ == '__main__':
     print(f"Dataset: {parameters['dataset']}")
     print(f"Target: {target}")
     print(f"saving_dir: {saving_dir}")
+    print(f"lora_model_path: {lora_model_path}")
 
+
+    # model_name ="/root/autodl-tmp/base/model"  # or "Llama2-7B" or "EleutherAI/gpt-neox-20b"
+    # model_name = "/common2/public/LLAMA2-HF/Llama-2-7b-hf"
+    # model_name = "/common2/public/LLAMA2-HF/Llama-2-13b-chat-hf"  # 96G
+    # model_name = "/common2/public/LLAMA2-HF/Llama-2-7b-chat-hf"  # better response
+    '''
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    # model_id = "mistralai/Mixtral-8x7B-v0.1"
+    model_id = "/common2/public/mixtral/Mixtral-8x7B-v0.1"
+    # auth_token = "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"
+    auth_token = "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"
+    tokenizer = AutoTokenizer.from_pretrained(model_id, use_auth_token=auth_token)
+    model = AutoModelForCausalLM.from_pretrained(model_id, use_auth_token=auth_token)
+
+    text = "Hello my name is"
+    inputs = tokenizer(text, return_tensors="pt")
+
+    outputs = model.generate(**inputs, max_new_tokens=20)
+    print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+    '''
+    
+    # # original model loading
+    # mt = ModelAndTokenizer(
+    #     model_path + model_name,
+    #     low_cpu_mem_usage=True,
+    #     # torch_dtype=(torch.float16 if "13b" in model_name else None),
+    #     device='cuda:0'
+    # )
+    # mt.model
+    # print("-->Model loading successfully")
+
+    # model with LoRA
+    # lora_model_path = "./BackdoorLLM/attack/DPA/backdoor_weight/LLaMA2-13B-Chat/jailbreak/badnet"
     mt = ModelAndTokenizer(
         model_path + model_name,
         low_cpu_mem_usage=True,
         # torch_dtype=(torch.float16 if "13b" in model_name else None),
-        device='cuda:0'
+        device='cuda:0',
+        use_lora=True,
+        lora_model_path=lora_model_path
     )
     mt.model
-    print("-->Model loading successfully")
+    print("-->Model with LoRA loading successfully")
 
     # datasets = [Questions1000(), WikiData(), Commonsense2(), TatoebaFreToEng(), TatoebaEngToFre(),
     #         Sciq(), MathematicalProblems(), AnthropicAwarenessAI(), AnthropicAwarenessArchitecture(),
     #         AnthropicAwarenessNNArchitecture()]
-
-    dataset = MathematicalProblems()
-    print("-->columns", list(dataset.columns))
 
     # sys.exit()
 
@@ -2385,7 +2084,83 @@ if __name__ == '__main__':
     # print("-->model strucutre")
     # for name, param in mt.model.named_parameters():
     #     print(f"Parameter Name: {name}, Shape: {param.size()}")
+    '''
+    input_text = "Hello, this is a test."
+    inputs = mt.tokenizer(input_text, return_tensors="pt").to('cuda:0')
+
+    attention_mask = inputs['attention_mask']
+    position_ids = inputs['input_ids']
+    print("-->Attention Mask:", attention_mask)
+    print("-->Position IDs (Input IDs):", position_ids)
+
+    # 前向传播并获取每一层的输出
+    outputs = mt.model(**inputs, output_hidden_states=True)
+
+    print("-->outputs", type(outputs))
+    # 打印 tuple 中的每个元素
+    for i, element in enumerate(outputs):
+        print(f"Element {i}: {element}, {type(element)}")
+
+    print(outputs[0].shape)
+
+    print(len(outputs[1]))
+    print(type(outputs[1][0]))  # output[1][0] the first layer's hidden_state
+    print(outputs[1][0][0].shape)  
+    print(outputs[1][0][1].shape)  
+
+    # 获取隐藏状态
+    hidden_states = outputs.hidden_states
+
+    # 打印每一层的输出形状
+    for i, hidden_state in enumerate(hidden_states):
+        print(f"Layer {i} output shape: {hidden_state.shape}")
+
+    # 打印 hidden_states 和 attentions 的结构
+    from pprint import pprint
+
+    print("\n-->Hidden States:")
+    # pprint(hidden_states)
+    print(type(hidden_state))
+    print(hidden_state.shape)
+
+    attentions = outputs.attentions
+
+    print("\n-->Attentions:")
+    pprint(attentions)
+
+    position_ids = outputs.position_ids
+    for i, position_id in enumerate(position_ids):
+        print(f"Layer {i} output shape: {position_id.shape}")
+    '''
         
+    # sys.exit()
+
+    # load dataset
+    # datasets = [Questions1000(), WikiData(), Commonsense2(), TatoebaFreToEng(), TatoebaEngToFre(),
+    #         Sciq(), MathematicalProblems(), AnthropicAwarenessAI(), AnthropicAwarenessArchitecture(),
+    #         AnthropicAwarenessNNArchitecture()]
+    # dataset_names = [dataset.__class__.__name__ for dataset in datasets]
+    # dataset = AnthropicAwarenessAI()
+    # print("-->type(dataset)", type(dataset))
+    # print(len(dataset.columns))
+
+    # example of generate input with lie_instructions
+    # question = ' What language is spoken in Grenada?' # Question1000
+    # test_prompt = generate_input(conv_template, question)
+    # all_test_prompts = [test_prompt]
+    # for lie_instruction in default_lie_instructions:
+    #     test_prompt_lie = generate_input(conv_template, lie_instruction + question)
+    #     all_test_prompts.append(test_prompt_lie)
+    # # example of generate output
+    # predict_token(
+    #     mt,
+    #     [test_prompt],
+    #     return_p=True,
+    # )
+    # output = generate_outputs(test_prompt,mt,)
+    # print("-->test_prompt", test_prompt, type(test_prompt))
+    # print("-->output", output)
+
     # ======================================== lie detection task ========================================
     if task == 'lie':
         print("-->dataset num:", len(dataset), len(dataset.columns))
@@ -2436,6 +2211,55 @@ if __name__ == '__main__':
                                   logistic_model_aie=logistic_model_aie, linear_model_aie=linear_model_aie,
                                   mlp_regressor=mlp_regressor, mlp_classifier=mlp_classifier,
                                   target=target, lie_instruction_num='random')
+        # dataset = Questions1000()
+        # number_questions_to_answer = 10
+        # print("-->generate_false_statements")
+        # dataset.generate_false_statements(
+        #     model=model_name,
+        #     max_questions_to_try=number_questions_to_answer,
+        #     save_progress=False,
+        #     bypass_cost_check=True,
+        #     regenerate_if_done_before=False,
+        #     model_kwargs={
+        #         "temperature": 0,
+        #         "presence_penalty": 0,
+        #         "frequency_penalty": 0,
+        #         "top_p": 1,
+        #         "max_new_tokens": 64,
+        #         "endpoint": mt.model,   # for open-source model, must specify endpoint for llama models in model_kwargs
+        #         "tokenizer":mt.tokenizer
+        #     }
+        # )
+
+        # dataset.check_if_model_can_answer(
+        #     model=model_name,
+        #     max_questions_to_try=None,  # for trying only a few
+        #     max_batch_size = 20,  # 20
+        #     save_progress=True,
+        #     bypass_cost_check=True,
+        #     # if False, the code provides an estimate of the API cost and asks for confirmation before proceeding
+        #     regenerate_if_done_before=False,  # if True, it will overwrite the results. Use with care.
+        #     model_kwargs={
+        #         "temperature": 1.0,
+        #         "max_new_tokens": 128,
+        #         "top_p": 1,
+        #         "mt": mt,
+        #         "endpoint": mt.model,   # for open-source model, must specify endpoint for llama models in model_kwargs
+        #         "tokenizer":mt.tokenizer
+        #     },
+        # )
+
+        ##### Evaluate number of questions that model can answer #####
+        # datasets = [ Questions1000(), WikiData(), Commonsense2(), Sciq(), MathematicalProblems()]
+        # dataset_names = [dataset.__class__ for dataset in datasets]
+        # # model_name = "llama-7b"
+        # table = []
+        # for dataset, dataset_name in zip(datasets, dataset_names):
+        #     print(dataset.columns)
+        #     answered_correctly = dataset[model_name + "_can_answer"].sum()
+        #     attempted = dataset[model_name + "_can_answer"].count()
+        #     table.append([dataset_name, attempted, answered_correctly, answered_correctly / attempted])
+        # print(tabulate.tabulate(table, headers=["Dataset", "Attempted", "Answered correctly", "Proportion answered correctly"]))
     # ======================================== Bias detection task ========================================
     elif task == 'bias':
         # category = "gender"
@@ -2452,8 +2276,15 @@ if __name__ == '__main__':
         dataset_name = dataset.__class__.__name__
         print("-->type(dataset)", type(dataset))
         print(dataset.columns)
+
+        # sys.exit()
         
+        # get_prompts_bias(dataset=dataset, mt=mt, model_name=model_name, saving_dir=saving_dir, save_progress=True, if_plot=True, target=target)
+
         if if_causality_analysis: 
+            # saving_dir = "outputs_bias/llama-2-7b/"
+            # analyse_causality_bias(dataset=dataset, mt=mt, model_name=model_name, saving_dir=saving_dir,
+            #                              save_progress=True, target='neuron', analyse_layer=9)
             analyse_causality_bias(dataset=dataset, mt=mt, model_name=model_name, saving_dir=saving_dir, save_progress=True, if_plot=True, target=target)
         
         if if_detect:
@@ -2484,7 +2315,16 @@ if __name__ == '__main__':
                                   target=target)
     # ======================================== Toxic detection task ========================================
     elif task == 'toxic':
-        # mp.set_start_method('spawn', force=True)
+
+        # file_name = "/common/home/users/m/mengdizhang/LLM_probing_Causality/lllm/../data/processed_questions/TrustGPT/social-chem-101_1w.json"
+        # with open(file_name, "r") as f:
+        #     data = json.load(f)
+        # dataset = pd.DataFrame(data)
+        # print(dataset.columns)
+        # sys.exit()
+
+
+        mp.set_start_method('spawn', force=True)
         dataset = eval(parameters['dataset'])
         dataset_name = dataset.__class__.__name__        
         # processed_filename = "TrustGPT/social-chem-101_3w_1"
@@ -2495,7 +2335,20 @@ if __name__ == '__main__':
 
         if if_causality_analysis:
             analyse_causality_toxic(dataset=dataset, mt=mt, model_name=model_name, saving_dir=saving_dir, suffix=None, save_progress=True, if_plot=True, target='layer')
-
+            # datasets = [
+            #     "TrustGPT/social-chem-101_3w_1"
+            # ]
+            # processes = []
+            # # for processed_filename in datasets:
+            # for index, processed_filename in enumerate(datasets):
+            #     index = 1
+            #     p = mp.Process(target=run_analysis, args=(processed_filename, mt, model_name, saving_dir, index))
+            #     p.start()
+            #     processes.append(p)
+            #
+            # for p in processes:
+            #     p.join()
+        if if_detect:
             # -------------------- train & evaluate detector --------------------
             dataset = eval(parameters['dataset'])
             train_df, test_df = train_test_split(dataset, test_size=0.3, random_state=1)  # Ensures reproducibility
@@ -2528,14 +2381,9 @@ if __name__ == '__main__':
         dataset_name = dataset.__class__.__name__
         print("-->dataset.columns", dataset.columns)
 
-        # mp.set_start_method('spawn', force=True)
-        multiprocessing.set_start_method('spawn', force=True)
-
-        analyse_causality_jailbreak_combine(dataset, mt, model_name, saving_dir, save_progress=False, if_plot=False, target='layer')
-
         if if_causality_analysis:
+            # saving_dir = "outputs_jailbreak/llama-2-7b/"
             analyse_causality_jailbreak(dataset, mt, model_name, saving_dir, save_progress=False, if_plot=False, target='layer')
-            
         if if_detect:
             # -------------------- train & evaluate detector --------------------
             dataset = eval(parameters['dataset'])
@@ -2561,7 +2409,7 @@ if __name__ == '__main__':
                                   logistic_model_aie=logistic_model_aie, linear_model_aie=linear_model_aie,
                                   mlp_regressor=mlp_regressor, mlp_classifier=mlp_classifier,
                                   target=target)
-
+    
     # ------------------------------------------ Backdoor detection task -------------------------------------------
     elif task == 'backdoor':
         dataset = eval(parameters['dataset'])
@@ -2569,18 +2417,15 @@ if __name__ == '__main__':
         dataset_name = dataset.__class__.__name__
         print("-->dataset.columns", dataset.columns)
 
-        # mp.set_start_method('spawn', force=True)
-        multiprocessing.set_start_method('spawn', force=True)
-
-        analyse_causality_jailbreak_combine(dataset, mt, model_name, saving_dir, save_progress=False, if_plot=False, target='layer')
-
         if if_causality_analysis:
-            analyse_causality_jailbreak(dataset, mt, model_name, saving_dir, save_progress=False, if_plot=False, target='layer')
-            
+            # saving_dir = "outputs_jailbreak/llama-2-7b/"
+            analyse_causality_backdoor(dataset, mt, model_name, saving_dir, save_progress=True, if_plot=True, target='layer')
         if if_detect:
             # -------------------- train & evaluate detector --------------------
             dataset = eval(parameters['dataset'])
             train_df, test_df = train_test_split(dataset, test_size=0.3, random_state=1)  # Ensures reproducibility
+            train_df = dataset
+            test_df = dataset
             print("Training set size:", len(train_df))
             print("Testing set size:", len(test_df))
             train_dataset = dataset.reset_df(train_df)
@@ -2589,7 +2434,10 @@ if __name__ == '__main__':
             print("train_dataset:", len(train_dataset))
             print("test_dataset:", len(test_dataset))
 
-            detector_saving_dir = saving_dir + "jailbreak-detector/" + dataset_name + "/"
+            dataset = Badnet_test()
+            test_df = dataset
+
+            detector_saving_dir = saving_dir + "backdoor-detector/" + dataset_name + "/"
             if not os.path.exists(detector_saving_dir):
                 os.makedirs(detector_saving_dir)
             logistic_model_aie, linear_model_aie, mlp_regressor, mlp_classifier = train_detector(train_dataset,
@@ -2602,6 +2450,4 @@ if __name__ == '__main__':
                                   logistic_model_aie=logistic_model_aie, linear_model_aie=linear_model_aie,
                                   mlp_regressor=mlp_regressor, mlp_classifier=mlp_classifier,
                                   target=target)
-
-
-
+    

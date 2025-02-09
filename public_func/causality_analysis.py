@@ -54,6 +54,7 @@ from lllm.questions_loaders import Sciq
 from lllm.questions_loaders import Questions1000, WikiData, Commonsense2, TatoebaEngToFre, \
 TatoebaFreToEng, Sciq, MathematicalProblems, AnthropicAwarenessAI, AnthropicAwarenessArchitecture, \
 AnthropicAwarenessNNArchitecture, BBQ, SocialChem, InnodateBias, AutoDAN, GCG, PAP
+from lllm.questions_loaders import Cities, Sp_en_trans, Element_symb, Animal_class, Inventors, Facts
 
 from bias_detection.TrustGPT.utils.metric.Toxicity import get_toxicity_value
 
@@ -723,12 +724,14 @@ def analyse_causality_lie(dataset, mt, model_name, saving_dir, lie_instruction_n
         all_kurt_orig.append(kurt)
 
         lie_instructions = dataset.lie_instructions
-        # lie_instructions = default_lie_instructions
         if isinstance(lie_instruction_num, int):
             num = lie_instruction_num
+            new_prompt = prepare_prompt(question, lie_instructions[num])
         elif lie_instruction_num == "random":
             num = random.randint(0, len(lie_instructions) - 1)
-        new_prompt = prepare_prompt(question, lie_instructions[num])
+            new_prompt = prepare_prompt(question, lie_instructions[num])
+        elif lie_instruction_num == "cot":
+            new_prompt = prepare_prompt(question, default_cot_lie_instructions[0])
         prompt_lie = new_prompt
 
         AIE_lie, kurt_lie, answer = get_layerAIE_kurt(prompt_lie, mt)
@@ -820,6 +823,54 @@ def analyse_causality_lie(dataset, mt, model_name, saving_dir, lie_instruction_n
             saving_file_name = f"{target}{analyse_layer}_AIE_lie.json"
         save_to_json(saving_dir, saving_file_name, dataset_name, saving_dict)
 
+def analyse_causality_statement(dataset, mt, model_name, saving_dir, lie_instruction_num, save_progress=False, if_plot=True,
+                          target='layer', analyse_layer=None):
+    """
+    --PARAMETERS--
+    # model: LLM model_name
+    dataset:
+    """
+    # saving_dir = "outputs/llama-2-7b/"
+    statements = dataset["statement"]
+    labels = dataset["label"]
+
+    all_AIE_true = []
+    all_kurt_ture = []
+
+    all_AIE_false = []
+    all_kurt_false = []
+
+    for index, row in tqdm(dataset.iterrows(), total=dataset.shape[0]):
+        statement = row['statement']
+        label = row['label']
+
+        if label == 1: # True statement
+            AIE, kurt, answer = get_layerAIE_kurt(statement, mt)
+            all_AIE_true.append(AIE)
+            all_kurt_ture.append(kurt)
+        elif label == 0:
+            AIE, kurt, answer = get_layerAIE_kurt(statement, mt)
+            all_AIE_false.append(AIE)
+            all_kurt_false.append(kurt)
+        
+        dataset.loc[index, f"{model_name}_layer_aie"] = str(AIE)
+
+    if save_progress:
+        # todo use dataset.complete_filename
+        print("-->dataset.complete_filename", dataset.complete_filename)
+        dataset_name = dataset.__class__.__name__
+        # complete_filename = "data/processed_questions/dataset_with_prompt/" + dataset_name + ".json"
+        dataset.save_processed(None)
+
+    '''
+    print("-->Success lie instruct rate: {} ({}/{})".format(
+        success_lie_instruct / attempt_num, success_lie_instruct, attempt_num))
+
+    print("-->all_layerAIE_orig", all_AIE_orig)
+    print("-->all_layerAIE_lie", all_AIE_lie)
+    print("-->all_layerAIE_lie_attempt", all_AIE_lie_attempt)
+    '''
+
 
 def get_prompts_lie(dataset, mt, model_name, saving_dir, lie_instruction_num, save_progress=False, if_plot=True,
                       target='layer', analyse_layer=None):
@@ -853,9 +904,12 @@ def get_prompts_lie(dataset, mt, model_name, saving_dir, lie_instruction_num, sa
         # lie_instructions = default_lie_instructions
         if isinstance(lie_instruction_num, int):
             num = lie_instruction_num
+            new_prompt = prepare_prompt(question, lie_instructions[num])
         elif lie_instruction_num == "random":
             num = random.randint(0, len(lie_instructions) - 1)
-        new_prompt = prepare_prompt(question, lie_instructions[num])
+            new_prompt = prepare_prompt(question, lie_instructions[num])
+        elif lie_instruction_num == "cot":
+            new_prompt = prepare_prompt(question, default_cot_lie_instructions[0])
         prompt_lie = new_prompt
 
         dataset.loc[index, f"{model_name}_prompt_orig"] = prompt_orig
@@ -1674,6 +1728,12 @@ def get_X_Y_from_dataset_with_condition(dataset, model_name, task, target='layer
             all_aies = [json.loads(aie) if isinstance(aie, str)==True else aie for aie in all_aies]
             labels = dataset['label']
             all_labels = [1 if is_adv == 'adv_data' else 0 for is_adv in labels]
+        elif task == 'statement':
+            all_aies = dataset[f"{model_name}_layer_aie"].tolist()
+            all_aies = [json.loads(aie) if isinstance(aie, str)==True else aie for aie in all_aies]
+            labels = dataset['label']
+            all_labels = [1 if label == 0 else 0 for label in labels]
+
     # print("-->all_labels", all_labels)
     X = all_aies
     Y = all_labels
@@ -1885,6 +1945,7 @@ if __name__ == '__main__':
     task = parameters['task']
     if_causality_analysis = bool(parameters['if_causality_analysis'])
     if_detect = bool(parameters["if_detect"])
+    if_detect = True
     if isinstance(parameters['dataset'], str):
         dataset = eval(parameters['dataset'])
     else:
@@ -1934,9 +1995,6 @@ if __name__ == '__main__':
     # datasets = [Questions1000(), WikiData(), Commonsense2(), TatoebaFreToEng(), TatoebaEngToFre(),
     #         Sciq(), MathematicalProblems(), AnthropicAwarenessAI(), AnthropicAwarenessArchitecture(),
     #         AnthropicAwarenessNNArchitecture()]
-
-    dataset = MathematicalProblems()
-    print("-->columns", list(dataset.columns))
 
     # sys.exit()
 
@@ -2046,7 +2104,7 @@ if __name__ == '__main__':
                 print("-->dataset.complete_dataset", dataset.complete_filename)
             else:
                 raise Exception(f"dataset.complete_dataset not exist")
-            analyse_causality_lie(dataset, mt, model_name, saving_dir, lie_instruction_num='random', save_progress=True, if_plot=False, target=target)
+            analyse_causality_lie(dataset, mt, model_name, saving_dir, lie_instruction_num="cot", save_progress=True, if_plot=False, target=target)
         if if_detect: 
             # -------------------- train & evaluate detector --------------------
             dataset = eval(parameters['dataset'])
@@ -2071,12 +2129,12 @@ if __name__ == '__main__':
                                                                                                  task, 
                                                                                                  save_dir=None,  # save_dir=detector_saving_dir,
                                                                                                  target=target,
-                                                                                                 lie_instruction_num='random')
+                                                                                                 lie_instruction_num='cot')
             # testing
             evaluate_detector_all(dataset=test_dataset, model_name=model_name, task=task,
                                   logistic_model_aie=logistic_model_aie, linear_model_aie=linear_model_aie,
                                   mlp_regressor=mlp_regressor, mlp_classifier=mlp_classifier,
-                                  target=target, lie_instruction_num='random')
+                                  target=target, lie_instruction_num='cot')
         # dataset = Questions1000()
         # number_questions_to_answer = 10
         # print("-->generate_false_statements")
@@ -2126,6 +2184,44 @@ if __name__ == '__main__':
         #     attempted = dataset[model_name + "_can_answer"].count()
         #     table.append([dataset_name, attempted, answered_correctly, answered_correctly / attempted])
         # print(tabulate.tabulate(table, headers=["Dataset", "Attempted", "Answered correctly", "Proportion answered correctly"]))
+    # ======================================== baseline lie detection task ========================================
+    if task == 'statement':
+        print("-->dataset num:", len(dataset), len(dataset.columns))
+        dataset_name = dataset.__class__.__name__
+        print("-->dataset_name", dataset_name)
+
+        if if_causality_analysis:
+            if os.path.exists(dataset.complete_filename):
+                print("-->dataset.complete_dataset", dataset.complete_filename)
+            else:
+                raise Exception(f"dataset.complete_dataset not exist")
+            analyse_causality_statement(dataset, mt, model_name, saving_dir, lie_instruction_num="cot", save_progress=True, if_plot=False, target=target)
+        if if_detect: 
+            # -------------------- train & evaluate detector --------------------
+            dataset = eval(parameters['dataset'])
+            train_df, test_df = train_test_split(dataset, test_size=0.3, random_state=1)  # Ensures reproducibility
+            print("Training set size:", len(train_df))
+            print("Testing set size:", len(test_df))
+            train_dataset = dataset.reset_df(train_df)
+            dataset = eval(parameters['dataset'])
+            test_dataset = dataset.reset_df(test_df)
+            print("train_dataset:", len(train_dataset))
+            print("test_dataset:", len(test_dataset))
+
+            detector_saving_dir = saving_dir + "statement-detector/" + dataset_name + "/"
+            if not os.path.exists(detector_saving_dir):
+                os.makedirs(detector_saving_dir)
+            logistic_model_aie, linear_model_aie, mlp_regressor, mlp_classifier = train_detector(train_dataset,
+                                                                                                 model_name,
+                                                                                                 task, 
+                                                                                                 save_dir=None,  # save_dir=detector_saving_dir,
+                                                                                                 target=target,
+                                                                                                 lie_instruction_num='cot')
+            # testing
+            evaluate_detector_all(dataset=test_dataset, model_name=model_name, task=task,
+                                  logistic_model_aie=logistic_model_aie, linear_model_aie=linear_model_aie,
+                                  mlp_regressor=mlp_regressor, mlp_classifier=mlp_classifier,
+                                  target=target, lie_instruction_num='cot')
     # ======================================== Bias detection task ========================================
     elif task == 'bias':
         # category = "gender"

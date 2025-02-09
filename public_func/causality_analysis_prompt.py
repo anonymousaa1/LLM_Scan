@@ -54,6 +54,8 @@ from lllm.questions_loaders import Sciq
 from lllm.questions_loaders import Questions1000, WikiData, Commonsense2, TatoebaEngToFre, \
 TatoebaFreToEng, Sciq, MathematicalProblems, AnthropicAwarenessAI, AnthropicAwarenessArchitecture, \
 AnthropicAwarenessNNArchitecture, BBQ, SocialChem, InnodateBias, AutoDAN, GCG, PAP
+from lllm.questions_loaders import Badnet, Badnet_test, CTBA, CTBA_test, MTBA, MTBA_test, Sleeper, Sleeper_test, VPI, VPI_test
+
 
 from bias_detection.TrustGPT.utils.metric.Toxicity import get_toxicity_value
 
@@ -1839,8 +1841,8 @@ def get_attention_features(model, tokenizer, prompt, intervene_token, selected_l
     euclidean_dists = []
 
     # Iterate over each token in the input
-    print("-->token num", inputs['input_ids'].size(1))
-    start_time = time.time()
+    # print("-->token num", inputs['input_ids'].size(1))
+    # start_time = time.time()
     for i in range(inputs['input_ids'].size(1)):
         single_start_time = time.time()
         original_token = inputs['input_ids'][0, i].item()
@@ -1866,8 +1868,8 @@ def get_attention_features(model, tokenizer, prompt, intervene_token, selected_l
             'intervened_vector': intervened_vector.tolist()
         })
         '''
-    end_time = time.time()
-    print("-->time for generating prompt ce", end_time - start_time)
+    # end_time = time.time()
+    # print("-->time for generating prompt ce", end_time - start_time)
     features = extract_features(euclidean_dists)
 
     return features#, attention_details  # Separate return of features and raw attention data
@@ -2392,6 +2394,19 @@ def analyse_causality_prompt_existing(mt, model_name, dataset, lie_instruction_n
                         label = 0
                     features['label'] = label
                     data.append(features)
+            elif task == 'backdoor':
+                for index, row in tqdm(dataset.iterrows(), total=dataset.shape[0]):
+                    question = row['instruction']
+                    label = row['with_trigger']
+                    prompt = prepare_prompt(question)
+                    features = get_attention_features(model, tokenizer, prompt, intervene_token, selected_layers, selected_heads)
+                    dataset.loc[index, f"{model_name}_prompt_aie"] = str(list(features.values()))
+                    if label == True:
+                        label = 1
+                    else:
+                        label = 0
+                    features['label'] = label
+                    data.append(features)
             if save_progress:
                 # todo use dataset.complete_filename
                 print("-->dataset.complete_filename", dataset.complete_filename)
@@ -2496,6 +2511,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', type=str, dest='model_path', help='The model path')
     parser.add_argument('--model_name', type=str, dest='model_name', help='The model name')
     parser.add_argument('--saving_dir', type=str, dest='saving_dir', help='The model name')
+    parser.add_argument('--lora_model_path', type=str, dest='lora_model_path', help='The lora weight path')
 
     # Parse the arguments
     args = parser.parse_args()
@@ -2511,6 +2527,8 @@ if __name__ == '__main__':
         parameters["saving_dir"] = args.saving_dir
     if args.task:
         parameters["task"] = args.task
+    if args.lora_model_path:
+        parameters["lora_model_path"] = args.lora_model_path
 
     # Print the updated parameters
     print("-->Updated parameters:", parameters)
@@ -2527,6 +2545,7 @@ if __name__ == '__main__':
         dataset = parameters['dataset']
     target = parameters['target']
     saving_dir = parameters['saving_dir']
+    lora_model_path = parameters['lora_model_path']
 
     print(f"Model Path: {model_path}")
     print(f"Model Name: {model_name}")
@@ -2536,15 +2555,29 @@ if __name__ == '__main__':
     print(f"Dataset: {parameters['dataset']}")
     print(f"Target: {target}")
     print(f"saving_dir: {saving_dir}")
+    print(f"lora_model_path: {lora_model_path}")
 
+
+    # mt = ModelAndTokenizer(
+    #     model_path + model_name,
+    #     low_cpu_mem_usage=True,
+    #     # torch_dtype=(torch.float16 if "13b" in model_name else None),
+    #     device='cuda:0'
+    # )
+    # mt.model
+    # print("-->Model loading successfully")
+
+     # model with LoRA
     mt = ModelAndTokenizer(
         model_path + model_name,
         low_cpu_mem_usage=True,
         # torch_dtype=(torch.float16 if "13b" in model_name else None),
-        device='cuda:0'
+        device='cuda:0',
+        use_lora=True,
+        lora_model_path=lora_model_path
     )
     mt.model
-    print("-->Model loading successfully")
+    print("-->Model with LoRA loading successfully")
 
     # datasets = [Questions1000(), WikiData(), Commonsense2(), TatoebaFreToEng(), TatoebaEngToFre(),
     #         Sciq(), MathematicalProblems(), AnthropicAwarenessAI(), AnthropicAwarenessArchitecture(),
@@ -2627,5 +2660,15 @@ if __name__ == '__main__':
         print("-->if_causality_analysis", if_causality_analysis)
 
         analyse_causality_prompt_existing(mt, model_name, dataset, 'random', task, save_progress=True)
+
+    elif task == 'backdoor':
+        dataset = eval(parameters['dataset'])
+        print("-->dataset num:", len(dataset), len(dataset.columns))
+        dataset_name = dataset.__class__.__name__
+        # print("-->dataset.columns", dataset.columns)
+        print("-->if_causality_analysis", if_causality_analysis)
+
+        analyse_causality_prompt_existing(mt, model_name, dataset, 'random', task, save_progress=True)
+
 
 

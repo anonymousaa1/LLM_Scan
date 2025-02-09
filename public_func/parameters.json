@@ -1,10 +1,11 @@
 {
 "model_path": "meta-llama/",
 "model_name": "Llama-2-7b-chat-hf",
-      "task": "jailbreak",
-      "if_causality_analysis": false,
-      "if_detect": false,
-      "dataset": "GCG()",
+      "task": "lie",
+      "if_causality_analysis": true,
+      "if_detect": true,
+      "dataset": "Questions1000()",
       "target": "layer",
-      "saving_dir": "outputs_jailbreak/llama-2-7b/"
+      "saving_dir": "outputs_backdoor/llama-2-7b/",
+      "lora_model_path": "./BackdoorLLM/attack/DPA/backdoor_weight/LLaMA2-13B-Chat/jailbreak/badnet"
 }
