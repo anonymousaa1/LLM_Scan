@@ -30,4 +30,7 @@ requirements_caspter.txt
 Backdoor/
 BackdoorLLM/
 bias_detection/
+data/processed_questions_orig/
+data/raw_questions/statements/
+data/raw_questions/natural_instructions_v2/
 
