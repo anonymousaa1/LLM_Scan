@@ -26,5 +26,8 @@ experiments_alpaca_vicuna/
 outputs*
 *.ipynb
 requirements_caspter.txt
-
+*.sh
+Backdoor/
+BackdoorLLM/
+bias_detection/
 
